@@ -2,7 +2,7 @@
 *
 *  Authors: Michael Chourdakis
 *  http://www.codeproject.com/Articles/1045674/Load-EXE-as-DLL-Mission-Possible
-*
+*  This code is licenced under CPOL: http://www.codeproject.com/info/cpol10.aspx
 *	Filename: debug.c
 *	Last revision: 10/12/2016
 */

@@ -29,10 +29,28 @@
 void ParseIAT(HINSTANCE h);
 typedef BOOL(WINAPI *DllMainFunc)(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
 
+typedef enum _PROCESSINFOCLASS {
+	ProcessBasicInformation = 0
+} PROCESSINFOCLASS;
+typedef ULONG(NTAPI *pNtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+typedef struct _PROCESS_BASIC_INFORMATION {
+	PVOID Reserved1;
+	PVOID PebBaseAddress;
+	PVOID Reserved2[2];
+	ULONG_PTR UniqueProcessId;
+	PVOID Reserved3;
+} PROCESS_BASIC_INFORMATION;
+
+BOOL SetPrivilege(
+	HANDLE hProcess,          // access token handle
+	LPCSTR lpszPrivilege,  // name of privilege to enable/disable
+	BOOL bEnablePrivilege   // to enable or disable privilege
+);
 //Breakpoint occurred because there was an INT3 in the code
 #define BREAKPOINT_EXCEPTION 0x80000003   
 
 //Single step during debugging
 #define DEBUG_EXCEPTION 0x80000004   
+//#define STATUS_INVALID_HANDLE            ((NTSTATUS)0xC0000008L)    // winnt
 
 #endif // !_LOCKY_DUMP_DEBUG_H

@@ -24,10 +24,13 @@
 #include "debug.h"
 #include "strings.h"
 
-#define VSSAPI_LOADED 0x1
 #define WRITE_FILE_CALLED 0x2
 #define MOVE_FILE_CALLED 0x4
-#define DNSAPI_LOADED 0x8
+#define VSSAPI_LOADED 0x10
+#define DNSAPI_LOADED 0x11
+#define SENSAPI_LOADED 0x12
+#define CSCAPI_LOADED 0x13
+#define PROC_ENDED 0x20
 
 #define ACTION_DEBUGGING 0x1
 #define ACTION_DROP 0x2
@@ -43,7 +46,7 @@ void dump_mapped_binary(HANDLE hTarProcess, PVOID ModuleBase, BOOLEAN bVerbose)
 	BYTE HeaderPage[0x400] = { 0 };
 	PVOID ReadPointer;
 	DWORD read, i, BytesWritten, BytesRead = 0;
-	
+
 	HANDLE OutFile = CreateFileA(DUMP_FILE_NAME, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (OutFile == INVALID_HANDLE_VALUE)
 	{
@@ -59,9 +62,9 @@ void dump_mapped_binary(HANDLE hTarProcess, PVOID ModuleBase, BOOLEAN bVerbose)
 	}
 	DosHeader = RVA(HeaderPage, 0);
 	NtHeader = RVA(HeaderPage, DosHeader->e_lfanew);
-	
+
 	// We don't have relocations so...
-	NtHeader->OptionalHeader.ImageBase = (DWORD) ModuleBase;
+	NtHeader->OptionalHeader.ImageBase = (DWORD)ModuleBase;
 
 	if (!WriteFile(OutFile, HeaderPage, sizeof(HeaderPage), &BytesWritten, NULL))
 	{
@@ -74,7 +77,7 @@ void dump_mapped_binary(HANDLE hTarProcess, PVOID ModuleBase, BOOLEAN bVerbose)
 		if (pSectionHeader[i].SizeOfRawData)
 		{
 			DWORD jump = SetFilePointer(OutFile, pSectionHeader[i].PointerToRawData, NULL, SEEK_SET);
-			if(bVerbose & ACTION_DEBUGGING) printf("Jumped File Pointer to %X\n", jump);
+			if (bVerbose & ACTION_DEBUGGING) printf("Jumped File Pointer to %X\n", jump);
 			for (read = 0; read < pSectionHeader[i].SizeOfRawData; read += sizeof(Page))
 			{
 				ReadPointer = RVA(ModuleBase, pSectionHeader[i].VirtualAddress + read);
@@ -133,20 +136,20 @@ PVOID search_module_for_config(HANDLE hTarProcess, PVOID ModuleAddr, BOOLEAN bVe
 						DWORD Offset = i;
 						//DWORD Offset = ConfigOffsets[i];
 						PVOID ConfigCandidate;
-						if (bVerbose & ACTION_DEBUGGING) printf("Reading data at (offset %p) %p\n", (PVOID)Offset, RVA(ModuleAddr, Offset));
+						//if (bVerbose & ACTION_DEBUGGING) printf("Reading data at (offset %p) %p\n", (PVOID)Offset, RVA(ModuleAddr, Offset));
 						if (!ReadProcessMemory(LockyProcess, RVA(ModuleAddr, Offset), &ConfigCandidate, sizeof(ConfigCandidate), &ByteCount))
 						{
 							if (bVerbose & ACTION_DEBUGGING) printf("Unabled to read offset %p : %d\n", (PVOID)Offset, GetLastError());
 							continue;
 						}
 						if (!ConfigCandidate) { continue; }
-						if (bVerbose & ACTION_DEBUGGING) printf("Candidate offset %p contains %p\n", (PVOID)Offset, ConfigCandidate);
+						//if (bVerbose & ACTION_DEBUGGING) printf("Candidate offset %p contains %p\n", (PVOID)Offset, ConfigCandidate);
 						fflush(stdout);
 
 						if ((ConfigCandidate) && ((ULONG_PTR)ConfigCandidate) <= 0x15)
 						{
-							if (bVerbose & ACTION_DEBUGGING) printf("Possible raw locky configuration\n");
-							if (bVerbose & ACTION_DEBUGGING) printf("Reading %d from %p\n", sizeof(LOCKY_CONFIG_CLASSIC), RVA(ModuleAddr, Offset));
+							//if (bVerbose & ACTION_DEBUGGING) printf("Possible raw locky configuration\n");
+							//if (bVerbose & ACTION_DEBUGGING) printf("Reading %d from %p\n", sizeof(LOCKY_CONFIG_CLASSIC), RVA(ModuleAddr, Offset));
 							if (ReadProcessMemory(LockyProcess, RVA(ModuleAddr, Offset), &ConfigSpace, sizeof(LOCKY_CONFIG_CLASSIC), &ByteCount))
 							{
 								LOCKY_CONFIG_CLASSIC* pConfigClassic = (LOCKY_CONFIG_CLASSIC*)&ConfigSpace;
@@ -174,14 +177,14 @@ PVOID search_module_for_config(HANDLE hTarProcess, PVOID ModuleAddr, BOOLEAN bVe
 						DWORD Offset = i;
 						//DWORD Offset = ConfigOffsets[i];
 						PVOID ConfigCandidate;
-						if (bVerbose & ACTION_DEBUGGING) printf("Reading data at (offset %p) %p\n", (PVOID)Offset, RVA(ModuleAddr, Offset));
+						//if (bVerbose & ACTION_DEBUGGING) printf("Reading data at (offset %p) %p\n", (PVOID)Offset, RVA(ModuleAddr, Offset));
 						if (!ReadProcessMemory(LockyProcess, RVA(ModuleAddr, Offset), &ConfigCandidate, sizeof(ConfigCandidate), &ByteCount))
 						{
 							if (bVerbose & ACTION_DEBUGGING) printf("Unabled to read offset %p : %d\n", (PVOID)Offset, GetLastError());
 							continue;
 						}
 						if (!ConfigCandidate) { continue; }
-						if (bVerbose & ACTION_DEBUGGING) printf("Candidate offset %p contains %p\n", (PVOID)Offset, ConfigCandidate);
+						//if (bVerbose & ACTION_DEBUGGING) printf("Candidate offset %p contains %p\n", (PVOID)Offset, ConfigCandidate);
 						fflush(stdout);
 
 						if ((0xFFF & (ULONG_PTR)ConfigCandidate) || !(ConfigCandidate))
@@ -253,21 +256,29 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 {
 	STARTUPINFOA StartupInfo = { 0 };
 	PROCESS_INFORMATION ProcessInfo = { 0 };
-
+	PROCESS_BASIC_INFORMATION pbi = { 0 };
 	HMODULE k32 = LoadLibraryA("kernel32.dll");
 	FARPROC pSleep = GetProcAddress(k32, "Sleep");
 	FARPROC pWriteFile = GetProcAddress(k32, "WriteFile");
 	FARPROC pMoveFile = GetProcAddress(k32, "MoveFileExW");
 	DWORD flags = DETACHED_PROCESS | DEBUG_PROCESS;
-	DWORD SavedBytes=0, ByteCount=0;
+	DWORD SavedBytes = 0, ByteCount = 0;
 	CHAR Break = 0xCC;
 	BOOLEAN LockyActive = 0;
 	DWORD DebugCount = 0;
-	HANDLE LockyProcess;
+	DWORD pbi_len = 0;
+	NTSTATUS ntstatus;
+	DWORD LockyProcessID = 0;
+	HANDLE LockyProcess = 0;
 	HANDLE DebugProcess = 0;
 	LPSTR CommandLine = GetCommandLineA();
+	HMODULE ntd = LoadLibraryA("Ntdll.dll");
+	pNtQueryInformationProcess NtQueryInformationProcess = (pNtQueryInformationProcess)GetProcAddress(ntd, "NtQueryInformationProcess");
+	DEBUG_EVENT DebugEvent;
+	DWORD dwContinueStatus = DBG_CONTINUE; // exception continuation 
+
 	StartupInfo.cb = sizeof(StartupInfo);
-	
+
 	if (!pWriteFile || !pMoveFile || !pSleep)
 	{
 		return GetLastError();
@@ -276,31 +287,54 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 	CommandLine = strstr(CommandLine, exe_path);
 	if (bVerbose & ACTION_DEBUGGING) printf("Starting %s\n", CommandLine);
 
+	if (!SetPrivilege(GetCurrentProcess(), "SeDebugPrivilege", TRUE))
+	{
+		if (bVerbose & ACTION_DEBUGGING) printf("SetPrivilege SeDebugPrivilege failed! %d\n", GetLastError());
+	}
+
 	if (!CreateProcessA(NULL, CommandLine, NULL, NULL, FALSE, flags, NULL, NULL, &StartupInfo, &ProcessInfo))
 	{
 		return GetLastError();
 	}
+	if (bVerbose & ACTION_DEBUGGING) printf("Created %d\n", ProcessInfo.dwProcessId);
+
 	CloseHandle(ProcessInfo.hProcess);
 	CloseHandle(ProcessInfo.hThread);
 
-	while(!LockyActive)
+	while (!LockyActive)
 	{ // Debuggering!!
-		DWORD dwContinueStatus = DBG_CONTINUE; // exception continuation 
-		DEBUG_EVENT DebugEvent;
 		LPVOID Reader;
 		LPVOID Pointer;
 		CRITICAL_SECTION CS = { 0 };
 		InitializeCriticalSection(&CS);
 
+		continue_search:
+		if (LockyActive) // True if we have paused and scanned for the locky module
+		{
+			if (bVerbose & ACTION_DEBUGGING) printf("Unable to locate configuration, resuming execution\n");
+			LockyActive = FALSE;
+			ContinueDebugEvent(DebugEvent.dwProcessId,
+				DebugEvent.dwThreadId,
+				dwContinueStatus);
+		}
 		if (!WaitForDebugEvent(&DebugEvent, 60 * 1000 * 2))
 		{
-			if (bVerbose & ACTION_DEBUGGING) printf("WaitForDebugEvent failed! %d\n", GetLastError() );
-			if(!DebugCount) break;
+			if (bVerbose & ACTION_DEBUGGING) printf("WaitForDebugEvent failed! %d\n", GetLastError());
+			if (!DebugCount)
+			{
+				if (bVerbose & ACTION_DEBUGGING) printf("Debug wait failed and no processes are being debugged.\n");
+				break;
+			}
 		}
 
 		EnterCriticalSection(&CS);
 		DebugProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
 
+		if (!VALID_HANDLE(DebugProcess))
+		{
+			printf("Failed to open process %d. Error %d\n", DebugEvent.dwProcessId, GetLastError());
+			if (!DebugCount) break;
+		}
 		switch (DebugEvent.dwDebugEventCode)
 		{
 		case OUTPUT_DEBUG_STRING_EVENT:
@@ -308,9 +342,9 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 			break;
 		case LOAD_DLL_DEBUG_EVENT:
 			Reader = malloc(0x100);
-			if (	ReadProcessMemory(DebugProcess, DebugEvent.u.LoadDll.lpImageName, &Pointer, sizeof(Pointer), &ByteCount) &&
-					Pointer && ByteCount==sizeof(Pointer) &&
-					ReadProcessMemory(DebugProcess, Pointer, Reader, 0x100, &ByteCount) && ByteCount && ((char*)Reader)[0] )
+			if (ReadProcessMemory(DebugProcess, DebugEvent.u.LoadDll.lpImageName, &Pointer, sizeof(Pointer), &ByteCount) &&
+				Pointer && ByteCount == sizeof(Pointer) &&
+				ReadProcessMemory(DebugProcess, Pointer, Reader, 0x100, &ByteCount) && ByteCount && ((char*)Reader)[0])
 			{
 				if (DebugEvent.u.LoadDll.fUnicode)
 				{
@@ -324,6 +358,7 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 				if (stristr(Reader, "vssapi.dll") ||
 					wcsistr(Reader, L"vssapi.dll"))
 				{
+					LockyProcessID = DebugEvent.dwProcessId;
 					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
 					LockyActive = VSSAPI_LOADED;
 				}
@@ -331,30 +366,65 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 				if (stristr(Reader, "dnsapi.dll") ||
 					wcsistr(Reader, L"dnsapi.dll"))
 				{
+					LockyProcessID = DebugEvent.dwProcessId;
 					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
 					LockyActive = DNSAPI_LOADED;
+				}
+				if (stristr(Reader, "sensapi.dll") ||
+					wcsistr(Reader, L"sensapi.dll"))
+				{
+					LockyProcessID = DebugEvent.dwProcessId;
+					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
+					LockyActive = SENSAPI_LOADED;
+				}
+				if (stristr(Reader, "cscapi.dll") ||
+					wcsistr(Reader, L"cscapi.dll") ||
+					stristr(Reader, "cscdll.dll") ||
+					wcsistr(Reader, L"cscdll.dll"))
+				{
+					LockyProcessID = DebugEvent.dwProcessId;
+					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
+					LockyActive = CSCAPI_LOADED;
 				}
 			}
 			else
 			{
-				if (bVerbose & ACTION_DEBUGGING) printf("Dll %p\n", DebugEvent.u.LoadDll.lpBaseOfDll);
+				if (bVerbose & ACTION_DEBUGGING) printf("Dll %p %d\n", DebugEvent.u.LoadDll.lpBaseOfDll, GetLastError());
 			}
 			free(Reader);
 			CloseHandle(DebugEvent.u.LoadDll.hFile);
 			break;
 		case EXIT_PROCESS_DEBUG_EVENT:
-			if (bVerbose & ACTION_DEBUGGING) printf("Process %d ended with %d\n", DebugEvent.dwProcessId, DebugEvent.u.ExitProcess.dwExitCode );
+			if (bVerbose & ACTION_DEBUGGING) printf("Process %d ended with %d\n", DebugEvent.dwProcessId, DebugEvent.u.ExitProcess.dwExitCode);
 			DebugCount -= 1;
 			if ((0xc0000000 & DebugEvent.u.ExitProcess.dwExitCode) == 0xc0000000)
 			{
-				if (bVerbose & ACTION_DEBUGGING) printf("Process ended with NtStatus Error %p\n", (PVOID) DebugEvent.u.ExitProcess.dwExitCode);
+				if (bVerbose & ACTION_DEBUGGING) printf("Process ended with NtStatus Error %p\n", (PVOID)DebugEvent.u.ExitProcess.dwExitCode);
 				return 0x2;
 			}
+			LockyProcessID = DebugEvent.dwProcessId;
+			LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
+			LockyActive = PROC_ENDED;
 			//if(!DebugCount) return 0x440;
 			break;
 		case CREATE_PROCESS_DEBUG_EVENT:
 			DebugCount += 1;
 			if (bVerbose & ACTION_DEBUGGING) printf("Process %d loaded at %p\n", DebugEvent.dwProcessId, DebugEvent.u.CreateProcessInfo.lpBaseOfImage);
+
+			if (VALID_HANDLE(NtQueryInformationProcess))
+			{
+				ntstatus = NtQueryInformationProcess(DebugProcess, ProcessBasicInformation, &pbi, sizeof(PROCESS_BASIC_INFORMATION), &pbi_len);
+				if (ERROR_SUCCESS == ntstatus)
+				{
+					BYTE PebStub[3] = { 0 };
+					if (ReadProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount))
+					{
+						PebStub[2] = 0;
+						WriteProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount);
+					}
+				}
+			}
+
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hFile);
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hThread);
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hProcess);
@@ -365,6 +435,9 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 		case EXCEPTION_DEBUG_EVENT:
 			switch (DebugEvent.u.Exception.ExceptionRecord.ExceptionCode)
 			{
+			case STATUS_INVALID_HANDLE:
+				dwContinueStatus = DBG_EXCEPTION_HANDLED;
+				break;
 			case DEBUG_EXCEPTION:
 				WriteProcessMemory(DebugProcess, pSleep, &Break, sizeof(Break), &ByteCount);
 				FlushInstructionCache(DebugProcess, pSleep, ByteCount);
@@ -377,9 +450,9 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 					HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, DebugEvent.dwThreadId);
 					INT SleepTime = 0;
 					lcContext.ContextFlags = CONTEXT_ALL;
-					
+
 					GetThreadContext(hThread, &lcContext);
-					lcContext.Eip = (DWORD) DebugEvent.u.Exception.ExceptionRecord.ExceptionAddress;
+					lcContext.Eip = (DWORD)DebugEvent.u.Exception.ExceptionRecord.ExceptionAddress;
 					lcContext.EFlags |= 0x100; // Set trap flag, which raises "single-step" exception
 					SetThreadContext(hThread, &lcContext);
 					CloseHandle(hThread);
@@ -430,7 +503,8 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 						(LPVOID)DebugEvent.u.Exception.ExceptionRecord.ExceptionAddress,
 						(LPVOID)DebugEvent.u.Exception.ExceptionRecord.ExceptionCode);
 					fflush(stdout);
-
+					
+					LockyProcessID = DebugEvent.dwProcessId;
 					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
 					if ((LPVOID)DebugEvent.u.Exception.ExceptionRecord.ExceptionAddress == pWriteFile)
 					{
@@ -453,6 +527,7 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 
 				if (!DebugEvent.u.Exception.dwFirstChance)
 				{
+					LockyProcessID = DebugEvent.dwProcessId;
 					LockyProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, DebugEvent.dwProcessId);
 					TerminateProcess(LockyProcess, DebugEvent.u.Exception.ExceptionRecord.ExceptionCode);
 					return ERROR_UNIDENTIFIED_ERROR;
@@ -465,8 +540,11 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 			//printf("dwDebugEventCode %d\n", DebugEvent.dwDebugEventCode)
 			;
 		}
-		
+
 		LeaveCriticalSection(&CS);
+
+		fflush(stdout);
+
 		if (!LockyActive)
 		{
 			ContinueDebugEvent(DebugEvent.dwProcessId,
@@ -479,8 +557,11 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 	if (LockyActive)
 	{
 		CHAR Page[0x1000] = { 0 };
-		PVOID ModuleAddr = (PVOID) 0x1000;
-		while ( !((ULONG_PTR) ModuleAddr & 0x80000000) )
+		PVOID ModuleAddr = (PVOID)0x1000;
+
+		if (bVerbose & ACTION_DEBUGGING) printf("Searching Locky process %d\n", LockyProcessID);
+
+		while (!((ULONG_PTR)ModuleAddr & 0x80000000))
 		{
 			ModuleAddr = search_module_for_config(LockyProcess, ModuleAddr, bVerbose);
 			if (0 == ModuleAddr)
@@ -488,8 +569,12 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 				return 0;
 			}
 		}
+
+		if (bVerbose & ACTION_DEBUGGING) printf("Failed to locate config %d\n", LockyProcessID);
+		goto continue_search;
 	}
 
+	if (bVerbose & ACTION_DEBUGGING) printf("No config found\n");
 	return (0xB00);
 }
 
@@ -526,10 +611,10 @@ BOOLEAN dump_config_values(LOCKY_CONFIG_HEADER* ConfigStart, BOOLEAN bVerbose)
 		DWORD b;
 		BOOLEAN offline_only = FALSE;
 		BOOLEAN Extended = FALSE;
-		LOCKY_CONFIG_CLASSIC* ConfigClassic = (LOCKY_CONFIG_CLASSIC*) ConfigStart;
+		LOCKY_CONFIG_CLASSIC* ConfigClassic = (LOCKY_CONFIG_CLASSIC*)ConfigStart;
 		LOCKY_CONFIG* ConfigExtended = (LOCKY_CONFIG*)ConfigStart;
 
-		if( ConfigStart->affilID > 0xFFF )
+		if (ConfigStart->affilID > 0xFFF)
 		{
 			if (bVerbose & ACTION_DEBUGGING) printf("Invalid Configuration: Affiliate ID %X\n", ConfigStart->affilID);
 			return FALSE;
@@ -574,7 +659,7 @@ BOOLEAN dump_config_values(LOCKY_CONFIG_HEADER* ConfigStart, BOOLEAN bVerbose)
 				return FALSE;
 			}
 		}
-		else if(!ConfigClassic->C2Servers[0])
+		else if (!ConfigClassic->C2Servers[0])
 		{
 			if (bVerbose & ACTION_DEBUGGING) printf("DGA Seed is set but no online data.\n");
 			return FALSE;
@@ -702,10 +787,10 @@ int main(int argc, char** argv)
 		return ERROR_BAD_ARGUMENTS;
 	}
 
-	bVerbose |= (0 != GetEnvironmentVariable("LOCKY_DUMP_VERBOSE", NULL, 0))? ACTION_VERBOSE : 0;
+	bVerbose |= (0 != GetEnvironmentVariable("LOCKY_DUMP_VERBOSE", NULL, 0)) ? ACTION_VERBOSE : 0;
 	bVerbose |= 0 != GetEnvironmentVariable("LOCKY_DUMP_SAVE", NULL, 0) ? ACTION_DROP : 0;
 	bVerbose |= 0 != GetEnvironmentVariable("LOCKY_DUMP_DIAG", NULL, 0) ? ACTION_DEBUGGING : 0;
-	printf( "Verbose: %X\n", bVerbose);
+	printf("Verbose: %X\n", bVerbose);
 
 	Page1 = malloc(0x400);
 	Page1Loaded = malloc(0x400);
@@ -731,7 +816,7 @@ int main(int argc, char** argv)
 		0x10000000 == NtHeader->OptionalHeader.ImageBase)
 	{
 		printf("Loaded: %p\n", TargetModule);
-		if(NtHeader->FileHeader.Characteristics & IMAGE_FILE_DLL) printf("The file is a DLL\n");
+		if (NtHeader->FileHeader.Characteristics & IMAGE_FILE_DLL) printf("The file is a DLL\n");
 		else if (NtHeader->FileHeader.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)
 		{
 			// Locky sample found that is a PE but has a DLL ImageBase
@@ -764,7 +849,7 @@ int main(int argc, char** argv)
 		}
 
 		dump_exports(TargetModule);
-		
+
 		if (bVerbose & ACTION_DROP)
 		{
 			dump_mapped_binary(GetCurrentProcess(), TargetModule, bVerbose);

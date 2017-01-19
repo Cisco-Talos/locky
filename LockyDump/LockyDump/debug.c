@@ -3,6 +3,7 @@
 *  Authors: Michael Chourdakis
 *  http://www.codeproject.com/Articles/1045674/Load-EXE-as-DLL-Mission-Possible
 *  This code is licenced under CPOL: http://www.codeproject.com/info/cpol10.aspx
+*
 *	Filename: debug.c
 *	Last revision: 10/12/2016
 */
@@ -12,6 +13,69 @@
 #include "debug.h"
 #include <stdio.h>
 #pragma comment(lib,"Dbghelp.lib")
+typedef BOOL (WINAPI *LookupPrivilegeValue_t)(LPCSTR, LPCSTR, PLUID);
+typedef BOOL (WINAPI *AdjustTokenPrivileges_t)(HANDLE, BOOL, PTOKEN_PRIVILEGES, DWORD, PTOKEN_PRIVILEGES,PDWORD);
+typedef BOOL (WINAPI *OpenProcessToken_t)(HANDLE, DWORD, PHANDLE);
+
+BOOL SetPrivilege(
+	HANDLE hProcess,          // Process handle
+	LPCSTR lpszPrivilege,  // name of privilege to enable/disable
+	BOOL bEnablePrivilege   // to enable or disable privilege
+)
+{
+	TOKEN_PRIVILEGES tp;
+	LUID luid;
+	HANDLE hToken = 0;
+	HMODULE Advapi32 = LoadLibraryA("Advapi32.dll");
+	OpenProcessToken_t pOpenProcessToken = (OpenProcessToken_t)GetProcAddress(Advapi32, "OpenProcessToken");
+	LookupPrivilegeValue_t pLookupPrivilegeValue = (LookupPrivilegeValue_t) GetProcAddress(Advapi32, "LookupPrivilegeValueA");
+	AdjustTokenPrivileges_t pAdjustTokenPrivileges = (AdjustTokenPrivileges_t) GetProcAddress(Advapi32, "AdjustTokenPrivileges");
+	
+	if (!(pLookupPrivilegeValue && pAdjustTokenPrivileges && pOpenProcessToken))
+	{
+		return FALSE;
+	}
+
+	if (!pOpenProcessToken(hProcess, TOKEN_ALL_ACCESS, &hToken))
+	{
+		return FALSE;
+	}
+
+	if (!pLookupPrivilegeValue(
+		NULL,            // lookup privilege on local system
+		lpszPrivilege,   // privilege to lookup 
+		&luid))        // receives LUID of privilege
+	{
+		return FALSE;
+	}
+
+	tp.PrivilegeCount = 1;
+	tp.Privileges[0].Luid = luid;
+	if (bEnablePrivilege)
+		tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+	else
+		tp.Privileges[0].Attributes = 0;
+
+	// Enable the privilege or disable all privileges.
+
+	if (!pAdjustTokenPrivileges(
+		hToken,
+		FALSE,
+		&tp,
+		sizeof(TOKEN_PRIVILEGES),
+		(PTOKEN_PRIVILEGES)NULL,
+		(PDWORD)NULL))
+	{
+		return FALSE;
+	}
+
+	if (GetLastError() == ERROR_NOT_ALL_ASSIGNED)
+	{
+		return FALSE;
+	}
+
+	return TRUE;
+}
 
 void ParseIAT(HINSTANCE h)
 {

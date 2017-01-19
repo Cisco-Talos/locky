@@ -56,6 +56,7 @@ typedef struct _LockyConfig {
 
 #define RVA(base, offset) (PVOID)((ULONG_PTR)(base) + (ULONG_PTR)(offset))
 #define MAX(a,b) ( ((a) > (b))?(a):(b) )
+#define VALID_HANDLE(handle) (((ULONG_PTR)(handle) != (ULONG_PTR)0 && (ULONG_PTR)(handle) != (ULONG_PTR)-1))
 
 BOOLEAN dump_config_values(LOCKY_CONFIG_HEADER* ConfigStart, BOOLEAN bVerbose);
 DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose);

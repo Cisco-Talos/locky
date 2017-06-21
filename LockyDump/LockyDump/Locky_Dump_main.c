@@ -37,6 +37,21 @@
 #define ACTION_VERBOSE 0x4
 
 #define DUMP_FILE_NAME "DUMPED_IMAGE.DLL"
+
+#define HIDE_DEBUGGER if (VALID_HANDLE(NtQueryInformationProcess))\
+			{\
+			ntstatus = NtQueryInformationProcess(DebugProcess, ProcessBasicInformation, &pbi, sizeof(PROCESS_BASIC_INFORMATION), &pbi_len);\
+			if (ERROR_SUCCESS == ntstatus)\
+			{\
+				BYTE PebStub[3] = { 0 };\
+				if (ReadProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount))\
+				{\
+					PebStub[2] = 0;\
+					WriteProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount);\
+				}\
+			}\
+			}
+
 void dump_mapped_binary(HANDLE hTarProcess, PVOID ModuleBase, BOOLEAN bVerbose)
 {
 	PIMAGE_DOS_HEADER DosHeader;
@@ -411,25 +426,14 @@ DWORD run_exe(LPSTR exe_path, BOOLEAN bVerbose)
 			DebugCount += 1;
 			if (bVerbose & ACTION_DEBUGGING) printf("Process %d loaded at %p\n", DebugEvent.dwProcessId, DebugEvent.u.CreateProcessInfo.lpBaseOfImage);
 
-			if (VALID_HANDLE(NtQueryInformationProcess))
-			{
-				ntstatus = NtQueryInformationProcess(DebugProcess, ProcessBasicInformation, &pbi, sizeof(PROCESS_BASIC_INFORMATION), &pbi_len);
-				if (ERROR_SUCCESS == ntstatus)
-				{
-					BYTE PebStub[3] = { 0 };
-					if (ReadProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount))
-					{
-						PebStub[2] = 0;
-						WriteProcessMemory(DebugProcess, pbi.PebBaseAddress, PebStub, sizeof(PebStub), &ByteCount);
-					}
-				}
-			}
+			HIDE_DEBUGGER;
 
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hFile);
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hThread);
 			CloseHandle(DebugEvent.u.CreateProcessInfo.hProcess);
 			break;
 		case CREATE_THREAD_DEBUG_EVENT:
+			HIDE_DEBUGGER;
 			CloseHandle(DebugEvent.u.CreateThread.hThread);
 			break;
 		case EXCEPTION_DEBUG_EVENT:
